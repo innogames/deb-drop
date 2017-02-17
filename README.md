@@ -1,3 +1,5 @@
+[![Build Status](https://travis-ci.org/innogames/deb-drop.svg?branch=master)](https://travis-ci.org/innogames/deb-drop)
+
 # Description
 
 Http fastCGI web server for provide simple and secure access for managing Debian packages in repositories Edit
