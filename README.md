@@ -39,9 +39,9 @@ Deploy package to repository
 curl https://<server> -F "token=someToken" -F "repos=someRepo-stable-amd64,someRepo-jessie-amd64" -F "package=@/root/test_1234_amd64.deb"
 ```  
 
-Additionally the parameter "versions" can be used to specify the amount of versions one package should have on the update server or you get as the 
-If more than the specified amount of versions are found the oldest get removed (String comparision, not real version parsing).
-Default is to not remove any packages.
+Additionally the parameter "versions" can be used to specify the amount of versions one package should have on the update server  
+If more than the specified amount of versions are found the oldest get removed  
+Default is to keep last 5 packages  
 
 ## Config
 The server reads `deb-drop.toml` during every request so no need to restart the server after a change here
