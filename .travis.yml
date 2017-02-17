@@ -1,9 +1,8 @@
 language: go
 
 go:
-  - 1.8
   - master
-
-script:
+install:
   - go install ./...
+script:
   - go test -v
