@@ -13,13 +13,14 @@ There are certain rules for package and config which need to be respected:
 * token: secret token to authenticate on server. If you perform actions on multiple repositories - token must work for all of them
 * package: may mean package name for `Get` and `Copy` functions or file location for `Deploy`
 * repos: one or multiple comma-separated repositories, on which you want to perform actions
+* versions: in case of usage `Get` means how many package entries to return. In case of `Copy` and `Deploy` - how many packages to keep. Default is 5  
 
 ## Usage
 
-Ther are 3 main use cases right now:  
+There are 3 main use cases right now:  
 
 ### Get
-Get one or multiple entries of latest versions of given package  
+Get one or multiple entries of latest versions of given package (names with version)  
 ```bash
 curl "https://<server>/?token=someToken&repos=someRepo-stable-amd64&package=test&versions=2"
 test_0.100_all.deb
@@ -31,17 +32,13 @@ Copy package from one repository to another
 This might be useful for testing package on staging and then copy in to stable  
 ```bash
 curl https://<server> -F "token=someToken" -F "repos=someRepo-stable-amd64,someRepo-jessie-amd64" -F "package=igcollect_0.100_all.deb"
-```  
+```
 
 ### Deploy
 Deploy package to repository  
 ```bash
 curl https://<server> -F "token=someToken" -F "repos=someRepo-stable-amd64,someRepo-jessie-amd64" -F "package=@/root/test_1234_amd64.deb"
-```  
-
-Additionally the parameter "versions" can be used to specify the amount of versions one package should have on the update server  
-If more than the specified amount of versions are found the oldest get removed  
-Default is to keep last 5 packages  
+```
 
 ## Config
 The server reads `deb-drop.toml` during every request so no need to restart the server after a change here
