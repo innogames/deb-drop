@@ -8,8 +8,8 @@ Http fastCGI web server for provide simple and secure access for managing Debian
 There are certain rules for package and config which need to be respected:
 
 * Nginx/Other web server must support FastCGI interface to interact with daemon. I highly recommend you to use https in front
-* Name of package-file must satisfy next schema: <name_of_package>_<version>_<architecture>.deb. For example grafsy_1.3_amd64.deb
-* Name of repository must satisfy next schema: <name_of_repository>-<section>-<architecture>. For example oleg-stable-amd64
+* Name of package-file must satisfy next schema: \<name_of_package\>\_\<version\>\_\<architecture\>.deb. For example grafsy_1.3_amd64.deb
+* Name of repository must satisfy next schema: \<name_of_repository\>-\<section\>-\<architecture\>. For example oleg-stable-amd64
 
 ## Parameters
 * token: secret token to authenticate on server. If you perform actions on multiple repositories - token must work for all of them
