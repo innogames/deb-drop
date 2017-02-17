@@ -1,0 +1,23 @@
+host = "localhost"
+port = 9000
+requestCacheSize = 10
+logfile = "/var/log/deb-drop/deb-drop.log"
+repoLocation = "/ftp/pool"
+tmpDir = "/tmp/deb-drop"
+repoRebuildCommand = "/usr/local/sbin/ig.package --generate -r"
+
+[[token]]
+value = "someToken"
+owner = "analytics"
+[[token.repo]]
+name = "analytics-stable-amd64"
+[[token.repo]]
+name = "analytics-jessie-amd64"
+
+[[token]]
+token = "anotherToken"
+owner = "analytics"
+[[token.repo]]
+name = "analytics-stable-amd64"
+[[token.repo]]
+name = "analytics-jessie-amd64"
