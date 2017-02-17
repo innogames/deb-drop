@@ -124,6 +124,7 @@ func mainHandler(w http.ResponseWriter, r *http.Request, config *Config, lg *log
 			fmt.Fprintln(w, err)
 			return
 		}
+		defer content.Close()
 		packageName = header.Filename
 	}
 
@@ -149,7 +150,6 @@ func mainHandler(w http.ResponseWriter, r *http.Request, config *Config, lg *log
 				}
 				fmt.Fprintln(w, path.Base(matches[element]))
 			}
-
 			return
 		}
 	} else if r.Method == "POST" {
@@ -184,6 +184,7 @@ func mainHandler(w http.ResponseWriter, r *http.Request, config *Config, lg *log
 				fmt.Fprintln(w, err)
 				return
 			}
+			defer content.Close()
 
 			// We need at least 2 repos to copy package between
 			if len(repos) < 2 {
@@ -202,13 +203,13 @@ func mainHandler(w http.ResponseWriter, r *http.Request, config *Config, lg *log
 			fmt.Fprintln(w, err)
 			return
 		}
-	}
 
-	err = removeOldPackages(lg, config, repos, packageName, keepVersions)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintln(w, err)
-		return
+		err = removeOldPackages(lg, config, repos, packageName, keepVersions)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprintln(w, err)
+			return
+		}
 	}
 
 	err = generateRepos(lg, config, repos)
