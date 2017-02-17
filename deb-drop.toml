@@ -4,20 +4,20 @@ requestCacheSize = 10
 logfile = "/var/log/deb-drop/deb-drop.log"
 repoLocation = "/ftp/pool"
 tmpDir = "/tmp/deb-drop"
-repoRebuildCommand = "/usr/local/sbin/ig.package --generate -r"
+repoRebuildCommand = "regenerate_repo.sh -r"
 
 [[token]]
 value = "someToken"
-owner = "analytics"
+owner = "somebody"
 [[token.repo]]
-name = "analytics-stable-amd64"
+name = "someRepo-stable-amd64"
 [[token.repo]]
-name = "analytics-jessie-amd64"
+name = "someRepo-jessie-amd64"
 
 [[token]]
-token = "anotherToken"
-owner = "analytics"
+value = "anotherToken"
+owner = "someoneElse"
 [[token.repo]]
-name = "analytics-stable-amd64"
+name = "someRepo-stable-amd64"
 [[token.repo]]
-name = "analytics-jessie-amd64"
+name = "someRepo-jessie-amd64"

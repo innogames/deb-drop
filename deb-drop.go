@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"path"
+	"mime/multipart"
 )
 
 type Config struct {
@@ -82,78 +84,127 @@ func makeHandler(lg *log.Logger, config *Config, fn func(http.ResponseWriter, *h
 }
 
 func mainHandler(w http.ResponseWriter, r *http.Request, config *Config, lg *log.Logger) {
-	if r.Method != "POST" {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		fmt.Fprintln(w, "Please use HTTP POST method to send packages")
-		return
-	}
 
-	/*
-		Allow caching of up to <amount> in memory before buffering to disk
-		In MB
-	*/
-	err := r.ParseMultipartForm(int64(config.RequestCacheSize * 1024))
+	repos := strings.Split(r.FormValue("repos"), ",")
+	err := validateRepos(lg, config.RepoLocation, repos)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		w.WriteHeader(http.StatusNotFound)
 		lg.Println(err)
 		fmt.Fprintln(w, err)
 		return
 	}
 
-	repos := strings.Split(r.FormValue("repos"), ",")
-	if len(repos) < 1 {
-		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprintln(w, "repo name not specified or too short")
-		return
-	}
-
-	token := r.FormValue("token")
-	err = validateToken(lg, config, token, repos)
+	err = validateToken(lg, config, r.FormValue("token"), repos)
 	if err != nil {
 		w.WriteHeader(http.StatusForbidden)
-		fmt.Fprintln(w, fmt.Sprint(err))
-		return
-	}
-
-	// check if they exists after token granted access
-	err = validateRepos(lg, config.RepoLocation, repos)
-	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
-		fmt.Fprintln(w, fmt.Sprint(err))
+		lg.Println(err)
+		fmt.Fprintln(w, err)
 		return
 	}
 
 	//Check if old packages should be removed
-	keep_versions, err := strconv.Atoi(r.FormValue(" "))
-	if err != nil || keep_versions < 1 {
-		keep_versions = 5
+	keepVersions, err := strconv.Atoi(r.FormValue("versions"))
+	if err != nil || keepVersions < 1 {
+		keepVersions = 5
 	}
 
-	// Check package name and save it locally
-	content, header, err := r.FormFile("package")
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprintln(w, err)
-		return
-	}
-	defer content.Close()
+	var content multipart.File
+	var packageName string
 
-	packageName := header.Filename
-	err = checkPackageName(lg, packageName)
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprintln(w, err)
-		return
-	}
-
-	err = addToRepos(lg, config, content, repos, packageName)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintln(w, err)
-		return
+	// We can get package name from FORM or from parameter. It depends if there is an upload or copy/get
+	if r.FormValue("package") != "" {
+		packageName = r.FormValue("package")
+	} else {
+		// This is upload
+		header := new(multipart.FileHeader)
+		content, header, err = r.FormFile("package")
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			lg.Println(err)
+			fmt.Fprintln(w, err)
+			return
+		}
+		packageName = header.Filename
 	}
 
-	err = removeOldPackages(lg, config, repos, packageName, keep_versions)
+	if r.Method == "GET" {
+		if len(repos) != 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			lg.Println("You should pass exactly 1 repo")
+			fmt.Fprintln(w, "You should pass exactly 1 repo")
+			return
+		}
+		pattern := config.RepoLocation + "/" + repos[0] + "/" + packageName + "*"
+		matches := getPackagesByPattern(pattern)
+		if len(matches) == 0 {
+			w.WriteHeader(http.StatusNotFound)
+			lg.Println(pattern + "is not found")
+			fmt.Fprintln(w, "%s is not found in %s", packageName, repos[0])
+		} else {
+			w.WriteHeader(http.StatusOK)
+			for i:=0; i<keepVersions; i++ {
+				element := len(matches)-1-i
+				if element < 0 {
+					break
+				}
+				fmt.Fprintln(w, path.Base(matches[element]))
+			}
+
+			return
+		}
+	} else if r.Method == "POST" {
+		// Allow caching of up to <amount> in memory before buffering to disk. In MB
+		err = r.ParseMultipartForm(int64(config.RequestCacheSize * 1024))
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			lg.Println(err)
+			fmt.Fprintln(w, err)
+			return
+		}
+
+		// Package name needs to be validated only when we are making changes
+		err = validatePackageName(lg, packageName)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			lg.Println(err)
+			fmt.Fprintln(w, err)
+			return
+		}
+
+		repositories := repos
+
+		if r.FormValue("package") != "" {
+			// This is used when package is passed as name, which means it is copy action
+
+			// Open original file
+			content, err = os.Open(config.RepoLocation + "/" + repos[0] + "/" + packageName)
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				lg.Println(err)
+				fmt.Fprintln(w, err)
+				return
+			}
+
+			// We need at least 2 repos to copy package between
+			if len(repos) < 2 {
+				w.WriteHeader(http.StatusBadRequest)
+				lg.Println("You should pass at least 2 repo")
+				fmt.Fprintln(w, "You should pass at least 2 repo")
+				return
+			}
+			repositories = repos[1:]
+		}
+
+		err = addToRepos(lg, config, content, repositories, packageName)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			lg.Println(err)
+			fmt.Fprintln(w, err)
+			return
+		}
+	}
+
+	err = removeOldPackages(lg, config, repos, packageName, keepVersions)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		fmt.Fprintln(w, err)
@@ -170,6 +221,11 @@ func mainHandler(w http.ResponseWriter, r *http.Request, config *Config, lg *log
 
 func validateToken(lg *log.Logger, config *Config, token string, repos []string) error {
 	// Going over all tokens in configuration to find requested
+	if token == "" {
+		lg.Printf("Attempt to access %s without token", repos)
+		return fmt.Errorf("%s", "You must specify token")
+	}
+
 	var foundToken bool
 	for _, configToken := range config.Token {
 		if configToken.Value == token {
@@ -184,8 +240,8 @@ func validateToken(lg *log.Logger, config *Config, token string, repos []string)
 					}
 				}
 				if !foundRepo {
-					lg.Println("Attempt to get access to", repos, "with invalid token")
-					return fmt.Errorf("%s", "Token is not allowed to use one or more of the specified repos")
+					lg.Println("Use of valid token with not listed repo " + requestedRepo)
+					return fmt.Errorf("%s", "Token is not allowed to use on one or more of the specified repos")
 				}
 			}
 			return nil
@@ -193,7 +249,7 @@ func validateToken(lg *log.Logger, config *Config, token string, repos []string)
 	}
 
 	if !foundToken {
-		lg.Println("Attempt to get access with invalid token")
+		lg.Printf("Attempt to access %s with invalid token\n", repos)
 		return fmt.Errorf("%s", "Token is not allowed to use one or more of the specified repos")
 	}
 
@@ -201,6 +257,11 @@ func validateToken(lg *log.Logger, config *Config, token string, repos []string)
 }
 
 func validateRepos(lg *log.Logger, repoLocation string, repos []string) error {
+	if len(repos) == 0 {
+		lg.Println("You should pass at least 1 repo")
+		return fmt.Errorf("%s", "You should pass at least 1 repo")
+	}
+
 	for _, repo := range repos {
 		parts := strings.Split(repo, "-")
 		if len(parts) != 3 {
@@ -222,7 +283,7 @@ func validateRepos(lg *log.Logger, repoLocation string, repos []string) error {
 	return nil
 }
 
-func checkPackageName(lg *log.Logger, name string) error {
+func validatePackageName(lg *log.Logger, name string) error {
 	if !strings.HasSuffix(name, ".deb") {
 		lg.Println("Somebody tried to upload invalid package name - missing .deb", name)
 		return fmt.Errorf("%s", "Package name must end with .deb")
@@ -234,7 +295,7 @@ func checkPackageName(lg *log.Logger, name string) error {
 	return nil
 }
 
-func writePostToTmpFile(lg *log.Logger, content io.Reader, tmpFilePath string) error {
+func writeStreamToTmpFile(lg *log.Logger, content io.Reader, tmpFilePath string) error {
 	tmpDir := filepath.Dir(tmpFilePath)
 	stat, err := os.Stat(tmpDir)
 	if err != nil {
@@ -267,7 +328,7 @@ func writePostToTmpFile(lg *log.Logger, content io.Reader, tmpFilePath string) e
 
 func addToRepos(lg *log.Logger, config *Config, content io.Reader, repos []string, packageName string) error {
 	tmpFilePath := fmt.Sprintf("%s/%s", config.TmpDir, packageName)
-	err := writePostToTmpFile(lg, content, tmpFilePath)
+	err := writeStreamToTmpFile(lg, content, tmpFilePath)
 	if err != nil {
 		return err
 	}
@@ -284,14 +345,18 @@ func addToRepos(lg *log.Logger, config *Config, content io.Reader, repos []strin
 	return nil
 }
 
-func removeOldPackages(lg *log.Logger, config *Config, repos []string, filename string, keep_versions int) error {
-	package_name := strings.Split(filename, "_")[0]
+func getPackagesByPattern(pattern string) []string {
+	matches, _ := filepath.Glob(pattern)
+	version.Sort(matches)
+	return matches
+}
+
+func removeOldPackages(lg *log.Logger, config *Config, repos []string, fileName string, keepVersions int) error {
+	packageName := strings.Split(fileName, "_")[0]
 	for _, repo := range repos {
-		pattern := config.RepoLocation + "/" + repo + "/" + package_name + "_*"
-		matches, _ := filepath.Glob(pattern)
-		version.Sort(matches)
-		if len(matches) > keep_versions {
-			to_remove := len(matches) - keep_versions
+		matches := getPackagesByPattern(config.RepoLocation + "/" + repo + "/" + packageName + "_*")
+		if len(matches) > keepVersions {
+			to_remove := len(matches) - keepVersions
 			for _, file := range matches[:to_remove] {
 				lg.Println("Removing", file)
 				err := os.Remove(file)
