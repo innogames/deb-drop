@@ -2,7 +2,6 @@ language: go
 
 go:
   - master
-install:
-  - go install ./...
 script:
+  - go install ./...
   - go test -v
