@@ -31,15 +31,15 @@ test_0.68_all.deb
 
 ### Copy
 Copy package from one repository to another  
-This might be useful for testing package on staging and then copy in to stable  
+This might be useful for testing package on staging and then copy in to stable (here is from stable to jessie)  
 ```bash
-curl https://<server> -F "token=someToken" -F "repos=someRepo-stable-amd64,someRepo-jessie-amd64" -F "package=igcollect_0.100_all.deb"
+curl https://<server> -F "token=someToken" -F "repos=someRepo-stable-amd64,someRepo-jessie-amd64" -F "package=test_0.100_all.deb"
 ```
 
 ### Deploy
 Deploy package to repository  
 ```bash
-curl https://<server> -F "token=someToken" -F "repos=someRepo-stable-amd64,someRepo-jessie-amd64" -F "package=@/root/test_1234_amd64.deb"
+curl https://<server> -F "token=someToken" -F "repos=someRepo-stable-amd64,someRepo-jessie-amd64" -F "package=@/root/test_0.100_all.deb"
 ```
 
 ## Config
