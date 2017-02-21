@@ -210,6 +210,14 @@ func mainHandler(w http.ResponseWriter, r *http.Request, config *Config, lg *log
 			fmt.Fprintln(w, err)
 			return
 		}
+	} else if (r.Method == "HEAD") {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, "Hello healthcheck")
+		return
+	} else {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		fmt.Fprintln(w, "Unsupported method " + r.Method)
+		return
 	}
 
 	err = generateRepos(lg, config, repos)
