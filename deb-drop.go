@@ -70,6 +70,7 @@ func main() {
 	}
 
 	http.HandleFunc("/", makeHandler(lg, &config, mainHandler))
+
 	err = fcgi.Serve(l, nil)
 
 	if err != nil {
@@ -84,6 +85,12 @@ func makeHandler(lg *log.Logger, config *Config, fn func(http.ResponseWriter, *h
 }
 
 func mainHandler(w http.ResponseWriter, r *http.Request, config *Config, lg *log.Logger) {
+
+	if (r.Method == "HEAD") {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, "Hello healthcheck")
+		return
+	}
 
 	repos := strings.Split(r.FormValue("repos"), ",")
 	err := validateRepos(lg, config.RepoLocation, repos)
@@ -210,10 +217,6 @@ func mainHandler(w http.ResponseWriter, r *http.Request, config *Config, lg *log
 			fmt.Fprintln(w, err)
 			return
 		}
-	} else if (r.Method == "HEAD") {
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprintln(w, "Hello healthcheck")
-		return
 	} else {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		fmt.Fprintln(w, "Unsupported method " + r.Method)
