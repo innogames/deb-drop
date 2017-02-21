@@ -139,8 +139,9 @@ func mainHandler(w http.ResponseWriter, r *http.Request, config *Config, lg *log
 		matches := getPackagesByPattern(pattern)
 		if len(matches) == 0 {
 			w.WriteHeader(http.StatusNotFound)
-			lg.Println(pattern + "is not found")
+			lg.Println(pattern + " is not found")
 			fmt.Fprintln(w, "%s is not found in %s", packageName, repos[0])
+			return
 		} else {
 			w.WriteHeader(http.StatusOK)
 			for i:=0; i<keepVersions; i++ {
