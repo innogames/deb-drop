@@ -187,7 +187,7 @@ func mainHandler(w http.ResponseWriter, r *http.Request, config *Config, lg *log
 			if err != nil {
 				w.WriteHeader(http.StatusBadRequest)
 				lg.Println(err)
-				fmt.Fprintf(w, "Can not find original %s in %s", packageName, repos[0])
+				fmt.Fprintf(w, "Can not find original package %s in %s", packageName, repos[0])
 				return
 			}
 			defer content.Close()
