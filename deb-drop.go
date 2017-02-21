@@ -70,7 +70,6 @@ func main() {
 	}
 
 	http.HandleFunc("/", makeHandler(lg, &config, mainHandler))
-
 	err = fcgi.Serve(l, nil)
 
 	if err != nil {
@@ -188,7 +187,7 @@ func mainHandler(w http.ResponseWriter, r *http.Request, config *Config, lg *log
 			if err != nil {
 				w.WriteHeader(http.StatusBadRequest)
 				lg.Println(err)
-				fmt.Fprintln(w, err)
+				fmt.Fprintf(w, "Can not find original %s in %s", packageName, repos[0])
 				return
 			}
 			defer content.Close()
