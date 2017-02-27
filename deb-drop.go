@@ -16,6 +16,7 @@ import (
 	"strings"
 	"path"
 	"mime/multipart"
+	"regexp"
 )
 
 type Config struct {
@@ -135,12 +136,22 @@ func mainHandler(w http.ResponseWriter, r *http.Request, config *Config, lg *log
 	}
 
 	if r.Method == "GET" {
+		// Package name needs to be validated only when we are making changes
+		err = validatePackageName(lg, packageName, false)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			lg.Println(err)
+			fmt.Fprintln(w, err)
+			return
+		}
+
 		if len(repos) != 1 {
 			w.WriteHeader(http.StatusBadRequest)
 			lg.Println("You should pass exactly 1 repo")
 			fmt.Fprintln(w, "You should pass exactly 1 repo")
 			return
 		}
+
 		pattern := config.RepoLocation + "/" + repos[0] + "/" + packageName + "*"
 		matches := getPackagesByPattern(pattern)
 		if len(matches) == 0 {
@@ -169,7 +180,7 @@ func mainHandler(w http.ResponseWriter, r *http.Request, config *Config, lg *log
 		}
 
 		// Package name needs to be validated only when we are making changes
-		err = validatePackageName(lg, packageName)
+		err = validatePackageName(lg, packageName, true)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			lg.Println(err)
@@ -294,14 +305,18 @@ func validateRepos(lg *log.Logger, repoLocation string, repos []string) error {
 	return nil
 }
 
-func validatePackageName(lg *log.Logger, name string) error {
-	if !strings.HasSuffix(name, ".deb") {
-		lg.Println("Somebody tried to upload invalid package name - missing .deb", name)
-		return fmt.Errorf("%s", "Package name must end with .deb")
+func validatePackageName(lg *log.Logger, name string, strict bool) error {
+	r := new(regexp.Regexp)
+	if strict {
+		r = regexp.MustCompile("^([-0-9A-Za-z.]+_){2}[-0-9A-Za-z]+.deb$")
+	} else {
+		r = regexp.MustCompile("^([-0-9A-Za-z._]*)$")
 	}
-	if len(strings.Split(name, "_")) != 3 {
-		lg.Println("Somebody tried to upload invalid package name - does not contain 3 _", name)
-		return fmt.Errorf("%s", "the package name does not look like a valid debian package name")
+
+	lg.Println(name)
+	if !r.MatchString(name) {
+		lg.Println("Somebody tried to pass invalid package name", name)
+		return fmt.Errorf("%s", "Invalid package name")
 	}
 	return nil
 }
