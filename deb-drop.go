@@ -6,17 +6,17 @@ import (
 	"github.com/mcuadros/go-version"
 	"io"
 	"log"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"net/http/fcgi"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
-	"path"
-	"mime/multipart"
-	"regexp"
 )
 
 type Config struct {
@@ -86,7 +86,7 @@ func makeHandler(lg *log.Logger, config *Config, fn func(http.ResponseWriter, *h
 
 func mainHandler(w http.ResponseWriter, r *http.Request, config *Config, lg *log.Logger) {
 
-	if (r.Method == "HEAD") {
+	if r.Method == "HEAD" {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintln(w, "Hello healthcheck")
 		return
@@ -160,8 +160,8 @@ func mainHandler(w http.ResponseWriter, r *http.Request, config *Config, lg *log
 			return
 		} else {
 			w.WriteHeader(http.StatusOK)
-			for i:=0; i<keepVersions; i++ {
-				element := len(matches)-1-i
+			for i := 0; i < keepVersions; i++ {
+				element := len(matches) - 1 - i
 				if element < 0 {
 					break
 				}
@@ -229,7 +229,7 @@ func mainHandler(w http.ResponseWriter, r *http.Request, config *Config, lg *log
 		}
 	} else {
 		w.WriteHeader(http.StatusMethodNotAllowed)
-		fmt.Fprintln(w, "Unsupported method " + r.Method)
+		fmt.Fprintln(w, "Unsupported method "+r.Method)
 		return
 	}
 
