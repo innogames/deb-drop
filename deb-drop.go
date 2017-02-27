@@ -313,7 +313,6 @@ func validatePackageName(lg *log.Logger, name string, strict bool) error {
 		r = regexp.MustCompile("^([-0-9A-Za-z._]*)$")
 	}
 
-	lg.Println(name)
 	if !r.MatchString(name) {
 		lg.Println("Somebody tried to pass invalid package name", name)
 		return fmt.Errorf("%s", "Invalid package name")
