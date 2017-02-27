@@ -11,25 +11,25 @@ func TestCheckPackageName(t *testing.T) {
 
 	// Valid naming
 	name := "test_1.3_amd64.deb"
-	if validatePackageName(lg, name) != nil {
+	if validatePackageName(lg, name, true) != nil {
 		t.Errorf("Check of package name forbid correct name: %s", name)
 	}
 
 	// Invalid naming
 	name = "test_1.3_amd64.exe"
-	if validatePackageName(lg, name) == nil {
+	if validatePackageName(lg, name, true) == nil {
 		t.Errorf("Check of package name allowed wrong suffix: %s", name)
 	}
 
 	// Invalid naming
 	name = "test_1.3_2_amd64.exe"
-	if validatePackageName(lg, name) == nil {
+	if validatePackageName(lg, name, true) == nil {
 		t.Errorf("Check of package name allowed wrong name schema: %s", name)
 	}
 
 	// Invalid naming
 	name = "test_amd64.deb"
-	if validatePackageName(lg, name) == nil {
+	if validatePackageName(lg, name, true) == nil {
 		t.Errorf("Check of package name allowed wrong name schema: %s", name)
 	}
 }
