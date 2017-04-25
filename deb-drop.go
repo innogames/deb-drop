@@ -215,7 +215,7 @@ func mainHandler(w http.ResponseWriter, r *http.Request, config *Config, lg *log
 
 		err = addToRepos(lg, config, content, repositories, packageName)
 		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
+			w.WriteHeader(http.StatusConflict)
 			lg.Println(err)
 			fmt.Fprintln(w, err)
 			return
