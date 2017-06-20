@@ -191,7 +191,10 @@ func mainHandler(w http.ResponseWriter, r *http.Request, config *Config, lg *log
 		repositories := repos
 
 		if r.FormValue("package") != "" {
-			// This is used when package is passed as name, which means it is copy action
+			/*
+				This is used when package is passed as name, which means it is copy action
+				Because for UPLOAD it is multipart.FileHeader
+			*/
 
 			// Open original file
 			content, err = os.Open(config.RepoLocation + "/" + repos[0] + "/" + packageName)
@@ -214,7 +217,14 @@ func mainHandler(w http.ResponseWriter, r *http.Request, config *Config, lg *log
 		}
 
 		err = addToRepos(lg, config, content, repositories, packageName)
-		if err != nil {
+		if err != nil && r.FormValue("package") != "" {
+			// If COPY was performed and at the destination repo we already have this package - return not modified
+			w.WriteHeader(http.StatusNotModified)
+			lg.Println(err)
+			fmt.Fprintln(w, err)
+			return
+		} else if err != nil {
+			// If this was UPLOAD
 			w.WriteHeader(http.StatusConflict)
 			lg.Println(err)
 			fmt.Fprintln(w, err)
