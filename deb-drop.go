@@ -318,7 +318,7 @@ func validateRepos(lg *log.Logger, repoLocation string, repos []string) error {
 func validatePackageName(lg *log.Logger, name string, strict bool) error {
 	r := new(regexp.Regexp)
 	if strict {
-		r = regexp.MustCompile("^([-0-9A-Za-z.]+_)+[-0-9A-Za-z]+.deb$")
+		r = regexp.MustCompile("^([-0-9A-Za-z.]+_){2,}[-0-9A-Za-z]+.deb$")
 	} else {
 		r = regexp.MustCompile("^([-0-9A-Za-z._]*)$")
 	}
