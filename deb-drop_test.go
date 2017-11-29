@@ -15,6 +15,12 @@ func TestCheckPackageName(t *testing.T) {
 		t.Errorf("Check of package name forbid correct name: %s", name)
 	}
 
+	// Valid naming
+	name = "test-package_1.2.34-56_all.deb"
+	if validatePackageName(lg, name, true) != nil {
+		t.Errorf("Check of package name forbid correct name: %s", name)
+	}
+
 	// Invalid naming
 	name = "test_1.3_amd64.exe"
 	if validatePackageName(lg, name, true) == nil {
