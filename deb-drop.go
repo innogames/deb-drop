@@ -231,6 +231,9 @@ func mainHandler(w http.ResponseWriter, r *http.Request, config *Config, lg *log
 			return
 		}
 
+		// Remove the multipart-* files in /tmp
+		r.MultipartForm.RemoveAll()
+
 		err = removeOldPackages(lg, config, repos, packageName, keepVersions)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
