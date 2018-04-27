@@ -42,6 +42,9 @@ Deploy package to repository
 curl https://<server> -F "token=someToken" -F "repos=someRepo-stable-amd64,someRepo-jessie-amd64" -F "package=@/root/test_0.100_all.deb"
 ```
 
+You can keep single version while deploying. Just send `pinnedpackage` and full name of the package.
+Since deb-drop is stateless, you must do this with every deploy if you want to keep a specific package.
+
 ## Config
 The server reads `deb-drop.toml` during every request so no need to restart the server after a change here
 Structure:
