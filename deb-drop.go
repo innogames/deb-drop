@@ -2,8 +2,6 @@ package main
 
 import (
 	"fmt"
-	"github.com/BurntSushi/toml"
-	"github.com/mcuadros/go-version"
 	"io"
 	"log"
 	"mime/multipart"
@@ -17,6 +15,9 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/BurntSushi/toml"
+	"github.com/mcuadros/go-version"
 )
 
 type Config struct {
@@ -154,21 +155,22 @@ func mainHandler(w http.ResponseWriter, r *http.Request, config *Config, lg *log
 
 		pattern := config.RepoLocation + "/" + repos[0] + "/" + packageName + "*"
 		matches := getPackagesByPattern(pattern)
+
 		if len(matches) == 0 {
 			w.WriteHeader(http.StatusNotFound)
 			lg.Println(pattern + " is not found")
 			return
-		} else {
-			w.WriteHeader(http.StatusOK)
-			for i := 0; i < keepVersions; i++ {
-				element := len(matches) - 1 - i
-				if element < 0 {
-					break
-				}
-				fmt.Fprintln(w, path.Base(matches[element]))
-			}
-			return
 		}
+		w.WriteHeader(http.StatusOK)
+		for i := 0; i < keepVersions; i++ {
+			element := len(matches) - 1 - i
+			if element < 0 {
+				break
+			}
+			fmt.Fprintln(w, path.Base(matches[element]))
+		}
+		return
+
 	} else if r.Method == "POST" {
 		// Allow caching of up to <amount> in memory before buffering to disk. In MB
 		err = r.ParseMultipartForm(int64(config.RequestCacheSize * 1024))
@@ -231,7 +233,14 @@ func mainHandler(w http.ResponseWriter, r *http.Request, config *Config, lg *log
 			return
 		}
 
-		err = removeOldPackages(lg, config, repos, packageName, keepVersions)
+		var pinnedPackage string
+
+		// Check if a specific version is protected
+		if r.FormValue("pinnedpackage") != "" {
+			pinnedPackage = r.FormValue("pinnedpackage")
+		}
+
+		err = removeOldPackages(lg, config, repos, packageName, keepVersions, pinnedPackage)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			fmt.Fprintln(w, err)
@@ -386,18 +395,23 @@ func getPackagesByPattern(pattern string) []string {
 	return matches
 }
 
-func removeOldPackages(lg *log.Logger, config *Config, repos []string, fileName string, keepVersions int) error {
+func removeOldPackages(lg *log.Logger, config *Config, repos []string, fileName string, keepVersions int, pinnedPackage string) error {
 	packageName := strings.Split(fileName, "_")[0]
 	for _, repo := range repos {
 		matches := getPackagesByPattern(config.RepoLocation + "/" + repo + "/" + packageName + "_*")
 		if len(matches) > keepVersions {
-			to_remove := len(matches) - keepVersions
-			for _, file := range matches[:to_remove] {
-				lg.Println("Removing", file)
-				err := os.Remove(file)
-				if err != nil {
-					lg.Println("Could remove package '", file, "' from Repo: '", err, "'")
-					return fmt.Errorf("%s", "Cleanup of old packages has failed")
+			toRemove := len(matches) - keepVersions
+			for _, file := range matches[:toRemove] {
+				fullDebName := strings.Split(file, "/")[len(strings.Split(file, "/"))-1]
+				if fullDebName != pinnedPackage {
+					lg.Println("Removing", file)
+					err := os.Remove(file)
+					if err != nil {
+						lg.Println("Could remove package '", file, "' from Repo: '", err, "'")
+						return fmt.Errorf("%s", "Cleanup of old packages has failed")
+					}
+				} else {
+					lg.Println("Skipping " + file + " because user specifically requested to keep it.")
 				}
 			}
 		}
