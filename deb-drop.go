@@ -2,8 +2,6 @@ package main
 
 import (
 	"fmt"
-	"github.com/BurntSushi/toml"
-	"github.com/mcuadros/go-version"
 	"io"
 	"log"
 	"mime/multipart"
@@ -17,6 +15,9 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/BurntSushi/toml"
+	"github.com/mcuadros/go-version"
 )
 
 type Config struct {
@@ -179,6 +180,9 @@ func mainHandler(w http.ResponseWriter, r *http.Request, config *Config, lg *log
 			return
 		}
 
+		// Remove the multipart-* files in /tmp
+		defer r.MultipartForm.RemoveAll()
+
 		// Package name needs to be validated only when we are making changes
 		err = validatePackageName(lg, packageName, true)
 		if err != nil {
@@ -230,9 +234,6 @@ func mainHandler(w http.ResponseWriter, r *http.Request, config *Config, lg *log
 			fmt.Fprintln(w, err)
 			return
 		}
-
-		// Remove the multipart-* files in /tmp
-		defer r.MultipartForm.RemoveAll()
 
 		err = removeOldPackages(lg, config, repos, packageName, keepVersions)
 		if err != nil {
