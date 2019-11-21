@@ -426,9 +426,10 @@ func generateRepos(lg *log.Logger, config *Config, repos []string) error {
 		parts = parts[1:]
 		parts = append(parts, repo)
 		cmd = exec.Command(head, parts...)
-		err := cmd.Run()
+		buf, err := cmd.CombinedOutput()
 		if err != nil {
 			lg.Println("Could not generate metadata for", name, ":", err)
+			lg.Println(strings.TrimRight(string(buf), "\n"))
 			return fmt.Errorf("Could not generate metadata for %s : %v", name, err)
 		}
 	}
