@@ -34,6 +34,7 @@ type Config struct {
 type Token struct {
 	Value string
 	Owner string
+	ReadOnly bool
 	Repo  []Repo
 }
 
@@ -102,7 +103,7 @@ func mainHandler(w http.ResponseWriter, r *http.Request, config *Config, lg *log
 		return
 	}
 
-	err = validateToken(lg, config, r.FormValue("token"), repos)
+	err = validateToken(lg, config, r.FormValue("token"), repos, r.Method)
 	if err != nil {
 		w.WriteHeader(http.StatusForbidden)
 		lg.Println(err)
@@ -255,7 +256,7 @@ func mainHandler(w http.ResponseWriter, r *http.Request, config *Config, lg *log
 	}
 }
 
-func validateToken(lg *log.Logger, config *Config, token string, repos []string) error {
+func validateToken(lg *log.Logger, config *Config, token string, repos []string, method string) error {
 	// Going over all tokens in configuration to find requested
 	if token == "" {
 		lg.Printf("Attempt to access %s without token", repos)
@@ -280,6 +281,10 @@ func validateToken(lg *log.Logger, config *Config, token string, repos []string)
 					return fmt.Errorf("%s", "Token is not allowed to use on one or more of the specified repos")
 				}
 			}
+            if configToken.ReadOnly == true && method != "GET" {
+                lg.Println("Use of read only token for non-read http method " + method)
+                return fmt.Errorf("%s", "Use of read only token for non-read http method " + method)
+            }
 			return nil
 		}
 	}
