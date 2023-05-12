@@ -21,14 +21,14 @@ import (
 	"github.com/spf13/viper"
 )
 
+const ArgMax = 1024 * 128
+
 type Config struct {
-	Host               string
-	Port               int
-	RequestCacheSize   int
-	Logfile            string
-	TmpDir             string
-	RepoRebuildCommand string
-	Token              []Token
+	Host             string
+	Port             int
+	RequestCacheSize int
+	TmpDir           string
+	Token            []Token
 }
 
 type Token struct {
@@ -99,22 +99,38 @@ func loadConfig() (Config, error) {
 	return cfg, err
 }
 
-func listAptlyRepos() ([]string, error) {
-	cmd := exec.Command("aptly", "repo", "list", "--raw")
+func execAptly(args ...string) ([]string, error) {
+	cmd := exec.Command(args[0], args[1:]...)
 	buf, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("could not list aptly repos: %w", err)
+
+	lines := strings.Split(strings.TrimSpace(string(buf)), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.HasPrefix(lines[i], "Unable to open database, sleeping") {
+			lines = append(lines[:i], lines[i+1:]...)
+		}
 	}
 
-	return strings.Split(strings.TrimSpace(string(buf)), "\n"), nil
+	if err != nil {
+		err = fmt.Errorf("aptly returned an error: %w\nOutput: %s", err, string(buf))
+	}
+	return lines, err
+}
+
+func listAptlyRepos() ([]string, error) {
+	lines, err := execAptly("aptly", "repo", "list", "--raw")
+	if err != nil {
+		err = fmt.Errorf("repo list failed: %w", err)
+	}
+	return lines, err
 }
 
 type handler struct {
 	config      Config
 	mu          *sync.Mutex
-	t           *time.Ticker            // batch timer
-	q           map[string][]chan error // distributions to publish
-	adds        int32                   // how many adds still in progress
+	t           *time.Ticker              // batch timer
+	publishQ    map[string][]chan error   // distributions to publish
+	adds        int32                     // how many adds still in progress
+	cleanupQ    map[string]map[string]int // repo packages to clean
 	lastPublish time.Time
 }
 
@@ -123,8 +139,9 @@ func newHandler(config Config) *handler {
 		config:      config,
 		mu:          new(sync.Mutex),
 		t:           time.NewTicker(1000 * time.Millisecond),
-		q:           make(map[string][]chan error),
+		publishQ:    make(map[string][]chan error),
 		adds:        0,
+		cleanupQ:    make(map[string]map[string]int),
 		lastPublish: time.Now(),
 	}
 	go h.publishWorker()
@@ -144,58 +161,74 @@ func (h *handler) waitPublished(dist string) error {
 	h.mu.Lock()
 	h.t.Reset(1000 * time.Millisecond)
 
-	if _, ok := h.q[dist]; !ok {
-		h.q[dist] = make([]chan error, 0, 1)
+	if _, ok := h.publishQ[dist]; !ok {
+		h.publishQ[dist] = make([]chan error, 0, 1)
 	}
 
 	c := make(chan error, 1)
 	defer close(c)
 
-	h.q[dist] = append(h.q[dist], c)
+	h.publishQ[dist] = append(h.publishQ[dist], c)
 	h.mu.Unlock()
 	logrus.Infof("Wait for publish of %s..", dist)
 
 	return <-c
 }
 
-func (h *handler) publishBatch() {
+func (h *handler) publishBatch() bool {
 	// check for new publish requests
 	var n int
 	var d string
-	for dist, waiters := range h.q {
+	for dist, waiters := range h.publishQ {
 		if len(waiters) > n {
 			n = len(waiters)
 			d = dist
 		}
 	}
-
 	if n == 0 {
-		return
+		return false
 	}
 
 	// publish distribution
 	logrus.Infof("Publish %s..", d)
 	err := h.publishDist(d)
-	logrus.Infof("Done publishing %s", d)
+	//var err error = nil
+	if err == nil {
+		logrus.Infof("Done publishing %s", d)
+	}
 
 	// notify waiters that it is done
-	for _, waiter := range h.q[d] {
+	for _, waiter := range h.publishQ[d] {
 		waiter <- err
 	}
 
-	delete(h.q, d)
+	delete(h.publishQ, d)
+	return true
+}
+
+func (h *handler) popCleanupRepo() (string, string, int, bool) {
+	for repo, pkgs := range h.cleanupQ {
+		for pkg, keep := range pkgs {
+			delete(h.cleanupQ[repo], pkg)
+			return repo, pkg, keep, true
+		}
+	}
+	return "", "", 0, false
 }
 
 func (h *handler) publishWorker() {
+	idleTicks := 0
+
 	for {
-		h.mu.Lock()
 		<-h.t.C
+		h.mu.Lock()
 		adds := atomic.LoadInt32(&h.adds)
 
-		// skip if there are still changes in progress, but force a batch after some time..
+		// Skip if there are still changes in progress, but force a batch after some time..
 		if adds > 0 && time.Now().Sub(h.lastPublish) < 15*time.Second {
 			h.lastPublish = time.Now()
 			h.mu.Unlock()
+			idleTicks = 0
 			continue
 		}
 
@@ -203,9 +236,31 @@ func (h *handler) publishWorker() {
 			logrus.Infof("Still %d uploads in progress but no publish in %s. Force publish", adds, time.Now().Sub(h.lastPublish).String())
 		}
 
-		h.publishBatch()
+		// Publish one batch
+		published := h.publishBatch()
 		h.lastPublish = time.Now()
-		h.mu.Unlock()
+
+		// Count idle ticks
+		if adds == 0 && !published {
+			idleTicks++
+		} else {
+			idleTicks = 0
+		}
+
+		// If nothing is happening we have time for a cleanup
+		if idleTicks >= 10 {
+			repo, pkg, keep, ok := h.popCleanupRepo()
+			h.mu.Unlock()
+
+			if ok {
+				err := h.removeOldPackages(repo, pkg, keep)
+				if err != nil {
+					logrus.WithError(err).Errorf("Repo %s package cleanup of %s failed", repo, pkg)
+				}
+			}
+		} else {
+			h.mu.Unlock()
+		}
 	}
 }
 
@@ -275,6 +330,7 @@ func (h *handler) mainHandler(w http.ResponseWriter, r *http.Request) {
 		defer content.Close()
 		packageName = header.Filename
 	}
+	packageName = strings.TrimRight(packageName, ".deb")
 
 	if r.Method == "GET" {
 		// Package name needs to be validated only when we are making changes
@@ -357,12 +413,18 @@ func (h *handler) mainHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// err = removeOldPackages(lg, config, repos, packageName, keepVersions)
-		// if err != nil {
-		// 	w.WriteHeader(http.StatusInternalServerError)
-		// 	fmt.Fprintln(w, err)
-		// 	return
-		// }
+		// Queue cleanup job asynchronously
+		defer func() {
+			packageBasename := strings.Split(packageName, "_")[0]
+			h.mu.Lock()
+			for _, repo := range repositories {
+				if _, ok := h.cleanupQ[repo]; !ok {
+					h.cleanupQ[repo] = make(map[string]int)
+				}
+				h.cleanupQ[repo][packageBasename] = keepVersions
+			}
+			h.mu.Unlock()
+		}()
 	} else {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
@@ -398,6 +460,7 @@ func (h *handler) list(w http.ResponseWriter, repos []string, packageName string
 		if i >= n {
 			break
 		}
+		match += ".deb" // TODO: legacy
 		_, _ = fmt.Fprintln(w, match)
 	}
 }
@@ -416,7 +479,7 @@ func (h *handler) getRepoToken(repo string) (string, error) {
 func validatePackageName(name string, strict bool) error {
 	r := new(regexp.Regexp)
 	if strict {
-		r = regexp.MustCompile("^(?P<package_name>[a-zA-Z0-9.+-]+)_((?P<epoch>[0-9]+):)?(?P<upstream_version>[a-zA-Z0-9.+-:~]+)(-(?P<debian_version>[a-zA-Z0-9.+~]+))?(_(?P<achritecture>amd64|i386|all))\\.(?P<suffix>deb)$")
+		r = regexp.MustCompile("^(?P<package_name>[a-zA-Z0-9.+-]+)_((?P<epoch>[0-9]+):)?(?P<upstream_version>[a-zA-Z0-9.+-:~]+)(-(?P<debian_version>[a-zA-Z0-9.+~]+))?(_(?P<achritecture>amd64|i386|all))$")
 	} else {
 		r = regexp.MustCompile("^([-0-9A-Za-z._]*)$")
 	}
@@ -452,36 +515,133 @@ func writeStreamToTmpFile(content io.Reader, tmpFilePath string) error {
 	return err
 }
 
-//func removeOldPackages(lg *log.Logger, config *Config, repos []string, fileName string, keepVersions int) error {
-//	packageName := strings.Split(fileName, "_")[0]
-//	for _, repo := range repos {
-//		matches := getPackagesByPattern(config.RepoLocation + "/" + repo + "/" + packageName + "_*")
-//		if len(matches) > keepVersions {
-//			to_remove := len(matches) - keepVersions
-//			for _, file := range matches[:to_remove] {
-//				lg.Println("Removing", file)
-//				err := os.Remove(file)
-//				if err != nil {
-//					lg.Println("Could remove package '", file, "' from Repo: '", err, "'")
-//					return fmt.Errorf("%s", "Cleanup of old packages has failed")
-//				}
-//			}
-//		}
-//
-//	}
-//	return nil
-//}
+func (h *handler) removeOldPackages(repo string, packageName string, keepVersions int) error {
+	aptly, err := exec.LookPath("aptly")
+	if err != nil {
+		return fmt.Errorf("could not resolve aptly path: %w", err)
+	}
 
-func (h *handler) addToRepos(content io.Reader, repos []string, packageFile string) error {
-	tmpFilePath := fmt.Sprintf("%s/%s", h.config.TmpDir, packageFile)
+	// Group packages into version buckets
+	matches, err := h.listPackages(repo, packageName, true)
+	if err != nil {
+		return err
+	}
+
+	versions, buckets := groupVersions(matches, keepVersions)
+	if keepVersions >= len(versions) {
+		return nil
+	}
+
+	// Collect packages to be deleted
+	pkgs := make([]string, 0)
+	for _, version := range versions[keepVersions:] {
+		pkgs = append(pkgs, buckets[version]...)
+	}
+
+	logrus.Infof("Versions: %v", versions)
+	logrus.Infof("Keep versions: %v", versions[:keepVersions])
+
+	// Batch all packages into chunks so that we don't exceed ARG_MAX in case of big cleanups
+	nPrefix := len(aptly) + 1 + len("repo remove ") + len(repo) + 1 // Take base command into account
+	batches := h.batchPkgs(pkgs, nPrefix)
+
+	// Execute batch after batch
+	for _, batch := range batches {
+		logrus.Infof("Cleaning up %d packages from repo %s: %s", len(batch), repo, batch)
+		if _, err := execAptly("aptly", "repo", "remove", repo, strings.Join(batch, "|")); err != nil {
+			return fmt.Errorf("could not clean up %d packages from %s: %w", len(batch), repo, err)
+		}
+	}
+	logrus.Infof("Cleaned up %d packages from repo %s", len(pkgs), repo)
+	return nil
+}
+
+func groupVersions(packages []string, keepVersions int) ([]string, map[string][]string) {
+	r := regexp.MustCompile("[0-9]+\\.[0-9]+\\.[0-9]+")
+	versions := make([]string, 0)
+	buckets := make(map[string][]string)
+	for _, pkg := range packages {
+		version := strings.Split(pkg, "_")[1]
+		mainVersion := r.FindString(version)
+
+		if len(versions) == 0 || versions[len(versions)-1] != mainVersion {
+			versions = append(versions, mainVersion)
+		}
+		buckets[mainVersion] = append(buckets[mainVersion], pkg)
+	}
+
+	// Merge together many versions into bigger buckets
+	r = regexp.MustCompile("[0-9]+\\.[0-9]+")
+	shortVersions := make([]string, 0, len(versions))
+	for _, version := range versions {
+		for _, bucketPkg := range buckets[version] {
+			shortVersion := r.FindString(strings.Split(bucketPkg, "_")[1])
+			if len(shortVersions) == 0 || shortVersions[len(shortVersions)-1] != shortVersion {
+				shortVersions = append(shortVersions, shortVersion)
+			}
+			buckets[shortVersion] = append(buckets[shortVersion], bucketPkg)
+		}
+	}
+
+	// If the short versions don't deviate too much we can do those to keep more packages
+	if len(shortVersions) > keepVersions && len(shortVersions)*2 > len(versions) {
+		return shortVersions, buckets
+	}
+
+	// Split big versions up into smaller buckets
+	r = regexp.MustCompile("[0-9]+\\.[0-9]+\\.[0-9]+[^0-9]+")
+	longVersions := make([]string, 0, len(versions))
+	for _, version := range versions {
+		if len(buckets[version]) > keepVersions {
+			for _, bucketPkg := range buckets[version] {
+				longVersion := r.FindString(strings.Split(bucketPkg, "_")[1])
+				if len(longVersions) == 0 || longVersions[len(longVersions)-1] != longVersion {
+					longVersions = append(longVersions, longVersion)
+				}
+				buckets[longVersion] = append(buckets[longVersion], bucketPkg)
+			}
+		} else {
+			longVersions = append(longVersions, version)
+		}
+	}
+
+	// If we didn't produce too many long versions we can use those to remove some more packages
+	if len(versions)*2 > len(longVersions) {
+		return longVersions, buckets
+	}
+
+	return versions, buckets
+}
+
+func (h *handler) batchPkgs(pkgs []string, nPrefix int) [][]string {
+	var batches [][]string
+	var batchPkgs []string
+	c := nPrefix
+	for _, pkg := range pkgs {
+		if c+len(pkg)+1 > ArgMax {
+			batches = append(batches, batchPkgs)
+			batchPkgs = []string{}
+			c = nPrefix
+		}
+
+		c += len(pkg)
+		if len(batchPkgs) > 0 {
+			c++
+		}
+		batchPkgs = append(batchPkgs, pkg)
+	}
+	return append(batches, batchPkgs)
+}
+
+func (h *handler) addToRepos(content io.Reader, repos []string, packageName string) error {
+	tmpFilePath := fmt.Sprintf("%s/%s.deb", h.config.TmpDir, packageName)
 	err := writeStreamToTmpFile(content, tmpFilePath)
 	if err != nil {
 		return err
 	}
 	defer os.Remove(tmpFilePath)
 
-	packageName := strings.TrimRight(packageFile, ".deb")
-	dists := make(map[string]struct{})
+	// Check for package conflicts in target repos
 	for _, repo := range repos {
 		matches, err := h.listPackages(repo, packageName, true)
 		if err != nil {
@@ -493,23 +653,27 @@ func (h *handler) addToRepos(content io.Reader, repos []string, packageFile stri
 		if len(matches) > 0 {
 			return fmt.Errorf("package version already exists")
 		}
+	}
 
-		h.startAdd()
-		h.mu.Lock()
+	dists := make(map[string]struct{})
+	h.startAdd()
+	h.mu.Lock()
+	for _, repo := range repos {
 		logrus.Infof("Add %s to %s", packageName, repo)
-		cmd := exec.Command("aptly", "repo", "add", repo, tmpFilePath)
-		buf, err := cmd.CombinedOutput()
-		h.mu.Unlock()
-		h.finishAdd()
-		if err != nil {
-			return fmt.Errorf("could not add package %s to %s: %w\n%s", tmpFilePath, repo, err, strings.TrimSpace(string(buf)))
+		if _, err := execAptly("aptly", "repo", "add", repo, tmpFilePath); err != nil {
+			h.mu.Unlock()
+			h.finishAdd()
+			return fmt.Errorf("could not add package %s to %s: %w", tmpFilePath, repo, err)
 		}
 		logrus.Infof("Done adding %s to %s", packageName, repo)
 
 		dist := strings.Split(repo, "-")[0]
 		dists[dist] = struct{}{}
 	}
+	h.mu.Unlock()
+	h.finishAdd()
 
+	// Wait for publish of distributions
 	for dist := range dists {
 		err = h.waitPublished(dist)
 		if err != nil {
@@ -521,13 +685,10 @@ func (h *handler) addToRepos(content io.Reader, repos []string, packageFile stri
 }
 
 func (h *handler) publishDist(dist string) error {
-	cmd := exec.Command("aptly", "publish", "update", "--skip-contents", "--batch", "--passphrase-file", "/etc/aptly/passphrase", "--force-overwrite", dist, dist)
-	//cmd := exec.Command("aptly", "publish", "update", "--skip-contents", "--batch", "--skip-signing", "--force-overwrite", dist, dist)
-	buf, err := cmd.CombinedOutput()
+	_, err := execAptly("aptly", "publish", "update", "--skip-contents", "--batch", "--passphrase-file", "/etc/aptly/passphrase", "--force-overwrite", dist, dist)
 	if err != nil {
-		err = fmt.Errorf("could not publish %s: %w\n%s", dist, err, strings.TrimSpace(string(buf)))
+		err = fmt.Errorf("could not publish %s: %w", dist, err)
 	}
-
 	return err
 }
 
@@ -539,25 +700,18 @@ func (h *handler) listPackages(repo, packageName string, full bool) ([]string, e
 		q = fmt.Sprintf("Name (%% %s*)", packageName)
 	}
 
-	cmd := exec.Command("aptly", "repo", "search", repo, q)
-	buf, err := cmd.CombinedOutput()
-	out := strings.TrimSpace(string(buf))
+	lines, err := execAptly("aptly", "repo", "search", repo, q)
 	if err != nil {
-		if strings.Contains(out, "ERROR: no results") {
+		if strings.Contains(lines[0], "ERROR: no results") {
 			return []string{}, nil
 		}
-		return nil, fmt.Errorf("could not list packages in %s: %w\n%s", repo, err, out)
+		return nil, fmt.Errorf("could not list packages in %s: %w", repo, err)
 	}
 
-	matches := strings.Split(out, "\n")
-	for i := range matches {
-		matches[i] += ".deb" // TODO: legacy
-	}
-	return matches, nil
+	return lines, nil
 }
 
-func (h *handler) copyPackage(srcRepo string, dstRepos []string, packageFile string) error {
-	packageName := strings.TrimRight(packageFile, ".deb")
+func (h *handler) copyPackage(srcRepo string, dstRepos []string, packageName string) error {
 	matches, err := h.listPackages(srcRepo, packageName, true)
 	if err != nil {
 		msg := "Repository package listing failed"
@@ -571,7 +725,7 @@ func (h *handler) copyPackage(srcRepo string, dstRepos []string, packageFile str
 		return fmt.Errorf("found multiple packages for %s in %s", packageName, srcRepo)
 	}
 
-	dists := make(map[string]struct{})
+	// Check for package conflicts in target repos
 	for _, dstRepo := range dstRepos {
 		matches, err := h.listPackages(dstRepo, packageName, true)
 		if err != nil {
@@ -583,23 +737,29 @@ func (h *handler) copyPackage(srcRepo string, dstRepos []string, packageFile str
 		if len(matches) > 0 {
 			return fmt.Errorf("package version already exists")
 		}
+	}
 
-		h.startAdd()
-		h.mu.Lock()
-		logrus.Infof("Copy %s from %s to %s..", strings.TrimRight(packageName, ".deb"), srcRepo, dstRepo)
-		cmd := exec.Command("aptly", "repo", "copy", srcRepo, dstRepo, strings.TrimRight(packageName, ".deb"))
-		buf, err := cmd.CombinedOutput()
-		h.mu.Unlock()
-		h.finishAdd()
+	// Copy the package
+	dists := make(map[string]struct{})
+	h.startAdd()
+	h.mu.Lock()
+	for _, dstRepo := range dstRepos {
+		logrus.Infof("Copy %s from %s to %s..", packageName, srcRepo, dstRepo)
+		_, err = execAptly("aptly", "repo", "copy", srcRepo, dstRepo, packageName)
 		if err != nil {
-			return fmt.Errorf("could not copy package: %w\n%s", err, strings.TrimSpace(string(buf)))
+			h.mu.Unlock()
+			h.finishAdd()
+			return fmt.Errorf("could not copy package: %w", err)
 		}
-		logrus.Infof("Done copying %s from %s to %s", strings.TrimRight(packageName, ".deb"), srcRepo, dstRepo)
+		logrus.Infof("Done copying %s from %s to %s", packageName, srcRepo, dstRepo)
 
 		dist := strings.Split(dstRepo, "-")[0]
 		dists[dist] = struct{}{}
 	}
+	h.mu.Unlock()
+	h.finishAdd()
 
+	// Wait for publish of distributions
 	for dist := range dists {
 		err := h.waitPublished(dist)
 		if err != nil {
