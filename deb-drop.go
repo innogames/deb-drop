@@ -440,6 +440,7 @@ func (h *handler) list(w http.ResponseWriter, repos []string, packageName string
 		return
 	}
 
+	// List packages from aptly
 	matches, err := h.listPackages(repos[0], packageName, false)
 	if err != nil {
 		msg := "Repository package listing failed"
@@ -455,13 +456,28 @@ func (h *handler) list(w http.ResponseWriter, repos []string, packageName string
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
-	for i, match := range matches {
-		if i >= n {
-			break
+	// Group by package name
+	pkgsByName := make(map[string][]string)
+	for _, match := range matches {
+		pkgName := strings.Split(match, "_")[0]
+		if _, ok := pkgsByName[pkgName]; !ok {
+			pkgsByName[pkgName] = make([]string, 0, 1)
 		}
-		match += ".deb" // TODO: legacy
-		_, _ = fmt.Fprintln(w, match)
+		pkgsByName[pkgName] = append(pkgsByName[pkgName], match)
+	}
+
+	// Print versions out
+	w.WriteHeader(http.StatusOK)
+	for _, pkgs := range pkgsByName {
+		versions, buckets := groupVersions(pkgs, n)
+		for i, version := range versions {
+			if i >= n {
+				break
+			}
+			for _, pkg := range buckets[version] {
+				_, _ = fmt.Fprintln(w, pkg+".deb") // TODO: remove .deb
+			}
+		}
 	}
 }
 
