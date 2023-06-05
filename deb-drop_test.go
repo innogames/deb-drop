@@ -31,39 +31,49 @@ func TestCheckPackageName(t *testing.T) {
 }
 
 func TestValidateToken(t *testing.T) {
-	token := Token{"validToken", "oleg", []Repo{{"oleg-stable-amd64"}}}
-	config := Config{Token: []Token{token}}
+	config := Config{Token: []Token{
+		{"validToken1", "oleg", []Repo{{"oleg-stable-amd64"}}},
+		{"validToken2", "patrick", []Repo{{"patrick-stable-amd64"}}},
+		{"validToken3", "patrick", []Repo{{"patrick-stable-amd64"}}},
+	}}
 	h := newHandler(config)
 
 	// Valid token, valid repo
-	testToken := "validToken"
+	testToken := "validToken1"
 	testRepo := "oleg-stable-amd64"
-	repoToken, err := h.getRepoToken(testRepo)
-	if err != nil {
-		t.Errorf("Valid token for valid repo has failed: %v", err)
-	}
-	if repoToken != testToken {
-		t.Errorf("Valid token for valid repo did not match")
+	ok := h.validateToken(testRepo, testToken)
+	if !ok {
+		t.Errorf("Valid token for valid repo has failed")
 	}
 
 	// Invalid token, valid repo
 	testToken = "invalidToken"
 	testRepo = "oleg-stable-amd64"
-	repoToken, err = h.getRepoToken(testRepo)
-	if err != nil {
-		t.Errorf("Invalid token for valid repo has failed: %v", err)
-	}
-	if repoToken == testToken {
-		t.Errorf("Invalid token for valid repo did match")
+	ok = h.validateToken(testRepo, testToken)
+	if ok {
+		t.Errorf("Invalid token for valid repo has failed")
 	}
 
 	// Valid token, invalid repo
-	testToken = "validToken"
+	testToken = "validToken1"
 	testRepo = "forbidden-repo-amd64"
-	repoToken, err = h.getRepoToken(testRepo)
-	if err == nil && repoToken == testToken {
-		t.Errorf("Allowed token to access forbidden repo: %s", testRepo)
-	} else if err == nil {
-		t.Errorf("Found non-existent repo")
+	ok = h.validateToken(testRepo, testToken)
+	if ok {
+		t.Errorf("Allowed token to access forbidden repo")
+	}
+
+	// Multiple valid tokens for a repo
+	testRepo = "patrick-stable-amd64"
+	ok = h.validateToken(testRepo, "validToken1")
+	if ok {
+		t.Errorf("Allowed invalid token to access repo")
+	}
+	ok = h.validateToken(testRepo, "validToken2")
+	if !ok {
+		t.Errorf("Valid token for valid repo has failed")
+	}
+	ok = h.validateToken(testRepo, "validToken3")
+	if !ok {
+		t.Errorf("Valid token for valid repo has failed")
 	}
 }
