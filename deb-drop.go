@@ -289,16 +289,8 @@ func (h *handler) mainHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, repo := range repos {
-		// Check that repos exist
-		repoToken, err := h.getRepoToken(repo)
-		if err != nil {
-			w.WriteHeader(http.StatusNotFound)
-			_, _ = fmt.Fprintln(w, err)
-			return
-		}
-
 		// Check that token matches repo
-		if repoToken != token {
+		if ok := h.validateToken(repo, token); !ok {
 			logrus.Debugf("Attempt to access %s with invalid token", repos)
 			w.WriteHeader(http.StatusForbidden)
 			_, _ = fmt.Fprintln(w, "Token is not allowed to use one or more of the specified repos")
@@ -481,15 +473,15 @@ func (h *handler) list(w http.ResponseWriter, repos []string, packageName string
 	}
 }
 
-func (h *handler) getRepoToken(repo string) (string, error) {
+func (h *handler) validateToken(repo, token string) bool {
 	for _, tokenCfg := range h.config.Token {
 		for _, repoCfg := range tokenCfg.Repo {
-			if repoCfg.Name == repo {
-				return tokenCfg.Value, nil
+			if repoCfg.Name == repo && tokenCfg.Value == token {
+				return true
 			}
 		}
 	}
-	return "", fmt.Errorf("repo %s not found", repo)
+	return false
 }
 
 func validatePackageName(name string, strict bool) error {
