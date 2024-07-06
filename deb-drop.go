@@ -366,12 +366,18 @@ func writeStreamToTmpFile(lg *log.Logger, content io.Reader, tmpFilePath string)
 }
 
 func addToRepos(lg *log.Logger, config *Config, content io.Reader, repos []string, packageName string) error {
-	tmpFilePath := fmt.Sprintf("%s/%s", config.TmpDir, packageName)
+	// Place the file in a randomly-named dir to prevent parallel uploads from
+	// effecting each other
+	tmpDir, tmperr := os.MkdirTemp(config.TmpDir, "deb_drop")
+	if tmperr != nil {
+		return tmperr
+	}
+	tmpFilePath := fmt.Sprintf("%s/%s", tmpDir, packageName)
 	err := writeStreamToTmpFile(lg, content, tmpFilePath)
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmpFilePath)
+	defer os.RemoveAll(tmpDir)
 
 	for _, repo := range repos {
 		fileInRepo := config.RepoLocation + "/" + repo + "/" + packageName
