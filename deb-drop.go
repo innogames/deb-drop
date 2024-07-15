@@ -642,12 +642,18 @@ func (h *handler) batchPkgs(pkgs []string, nPrefix int) [][]string {
 }
 
 func (h *handler) addToRepos(content io.Reader, repos []string, packageName string) error {
-	tmpFilePath := fmt.Sprintf("%s/%s.deb", h.config.TmpDir, packageName)
+	// Place the file in a randomly-named dir to prevent parallel uploads from
+	// effecting each other
+	tmpDir, tmperr := os.MkdirTemp(h.config.TmpDir, "deb_drop")
+	if tmperr != nil {
+		return tmperr
+	}
+	tmpFilePath := fmt.Sprintf("%s/%s.deb", tmpDir, packageName)
 	err := writeStreamToTmpFile(content, tmpFilePath)
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmpFilePath)
+	defer os.RemoveAll(tmpDir)
 
 	// Check for package conflicts in target repos
 	for _, repo := range repos {
