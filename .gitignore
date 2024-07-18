@@ -27,3 +27,6 @@ _testmain.go
 *.test
 *.prof
 tokens.yml
+
+deb-drop.toml
+deb-drop
