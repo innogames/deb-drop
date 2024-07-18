@@ -642,6 +642,22 @@ func (h *handler) batchPkgs(pkgs []string, nPrefix int) [][]string {
 }
 
 func (h *handler) addToRepos(content io.Reader, repos []string, packageName string) error {
+
+	// First ensure tmpDir from config exists
+	stat, err := os.Stat(h.config.TmpDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			logrus.Infof("Tmp directory %s does not exist. Creating..", h.config.TmpDir)
+			if err = os.Mkdir(h.config.TmpDir, os.ModePerm); err != nil {
+				return err
+			}
+		} else {
+			return fmt.Errorf("failed to check tmp location %s: %w", h.config.TmpDir, err)
+		}
+	} else if !stat.IsDir() {
+		return fmt.Errorf("tmp location %s exists, but it is not a directory", h.config.TmpDir)
+	}
+
 	// Place the file in a randomly-named dir to prevent parallel uploads from
 	// effecting each other
 	tmpDir, tmperr := os.MkdirTemp(h.config.TmpDir, "deb_drop")
@@ -649,9 +665,9 @@ func (h *handler) addToRepos(content io.Reader, repos []string, packageName stri
 		return tmperr
 	}
 	tmpFilePath := fmt.Sprintf("%s/%s.deb", tmpDir, packageName)
-	err := writeStreamToTmpFile(content, tmpFilePath)
-	if err != nil {
-		return err
+	writeErr := writeStreamToTmpFile(content, tmpFilePath)
+	if writeErr != nil {
+		return writeErr
 	}
 	defer os.RemoveAll(tmpDir)
 
