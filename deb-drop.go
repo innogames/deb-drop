@@ -565,7 +565,8 @@ func (h *handler) removeOldPackages(repo string, packageName string, keepVersion
 }
 
 func groupVersions(packages []string, keepVersions int) ([]string, map[string][]string) {
-	r := regexp.MustCompile("[0-9]+\\.[0-9]+\\.[0-9]+")
+	// Regular expression to extract version whether it is semantic or a large single number.
+	r := regexp.MustCompile("(\\d+\\.\\d+\\.\\d+|\\d+)")
 	versions := make([]string, 0)
 	buckets := make(map[string][]string)
 	for _, pkg := range packages {
@@ -579,7 +580,8 @@ func groupVersions(packages []string, keepVersions int) ([]string, map[string][]
 	}
 
 	// Merge together many versions into bigger buckets
-	r = regexp.MustCompile("[0-9]+\\.[0-9]+")
+	// Reassign regular expression for shorter versions
+	r = regexp.MustCompile("\\d+\\.\\d+")
 	shortVersions := make([]string, 0, len(versions))
 	for _, version := range versions {
 		for _, bucketPkg := range buckets[version] {
@@ -597,7 +599,8 @@ func groupVersions(packages []string, keepVersions int) ([]string, map[string][]
 	}
 
 	// Split big versions up into smaller buckets
-	r = regexp.MustCompile("[0-9]+\\.[0-9]+\\.[0-9]+[^0-9]+")
+	// Reassign regular expression for longer versions
+	r = regexp.MustCompile("(\\d+\\.\\d+\\.\\d+[^\\d]+|\\d+)")
 	longVersions := make([]string, 0, len(versions))
 	for _, version := range versions {
 		if len(buckets[version]) > keepVersions {
