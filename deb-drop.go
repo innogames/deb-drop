@@ -564,30 +564,47 @@ func (h *handler) removeOldPackages(repo string, packageName string, keepVersion
 	return nil
 }
 
+// Simple helper function to check if a slice contains a specific string
+func contains(slice []string, item string) bool {
+    for _, s := range slice {
+        if s == item {
+            return true
+        }
+    }
+    return false
+}
+
 func groupVersions(packages []string, keepVersions int) ([]string, map[string][]string) {
-	r := regexp.MustCompile("[0-9]+\\.[0-9]+\\.[0-9]+")
+	// Regular expression to extract version whether it is semantic or a large single number.
+	r := regexp.MustCompile("(\\d+\\.\\d+\\.\\d+|\\d+)")
 	versions := make([]string, 0)
 	buckets := make(map[string][]string)
 	for _, pkg := range packages {
 		version := strings.Split(pkg, "_")[1]
 		mainVersion := r.FindString(version)
 
-		if len(versions) == 0 || versions[len(versions)-1] != mainVersion {
+		if len(versions) == 0 || !contains(versions, mainVersion) {
 			versions = append(versions, mainVersion)
 		}
-		buckets[mainVersion] = append(buckets[mainVersion], pkg)
+
+		if !contains(buckets[mainVersion], pkg) {
+			buckets[mainVersion] = append(buckets[mainVersion], pkg)
+		}
 	}
 
 	// Merge together many versions into bigger buckets
-	r = regexp.MustCompile("[0-9]+\\.[0-9]+")
+	// Reassign regular expression for shorter versions
+	r = regexp.MustCompile("\\d+\\.\\d+")
 	shortVersions := make([]string, 0, len(versions))
 	for _, version := range versions {
 		for _, bucketPkg := range buckets[version] {
 			shortVersion := r.FindString(strings.Split(bucketPkg, "_")[1])
-			if len(shortVersions) == 0 || shortVersions[len(shortVersions)-1] != shortVersion {
+			if len(shortVersions) == 0 || !contains(shortVersions, shortVersion) {
 				shortVersions = append(shortVersions, shortVersion)
 			}
-			buckets[shortVersion] = append(buckets[shortVersion], bucketPkg)
+			if !contains(buckets[shortVersion], bucketPkg) {
+				buckets[shortVersion] = append(buckets[shortVersion], bucketPkg)
+			}
 		}
 	}
 
@@ -597,19 +614,24 @@ func groupVersions(packages []string, keepVersions int) ([]string, map[string][]
 	}
 
 	// Split big versions up into smaller buckets
-	r = regexp.MustCompile("[0-9]+\\.[0-9]+\\.[0-9]+[^0-9]+")
+	// Reassign regular expression for longer versions
+	r = regexp.MustCompile("(\\d+\\.\\d+\\.\\d+[^\\d]+|\\d+)")
 	longVersions := make([]string, 0, len(versions))
 	for _, version := range versions {
 		if len(buckets[version]) > keepVersions {
 			for _, bucketPkg := range buckets[version] {
 				longVersion := r.FindString(strings.Split(bucketPkg, "_")[1])
-				if len(longVersions) == 0 || longVersions[len(longVersions)-1] != longVersion {
+				if len(longVersions) == 0 || !contains(longVersions, longVersion) {
 					longVersions = append(longVersions, longVersion)
 				}
-				buckets[longVersion] = append(buckets[longVersion], bucketPkg)
+				if !contains(buckets[longVersion], bucketPkg) {
+					buckets[longVersion] = append(buckets[longVersion], bucketPkg)
+				}
 			}
 		} else {
-			longVersions = append(longVersions, version)
+			if !contains(longVersions, version) {
+				longVersions = append(longVersions, version)
+			}
 		}
 	}
 
